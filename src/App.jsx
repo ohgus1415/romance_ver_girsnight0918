@@ -1422,6 +1422,67 @@ function useAttachmentUploader(showToast) {
   return { pending, uploading, addFiles, removeFile, reset };
 }
 
+// 브라우저 기본 '당겨서 새로고침'은 페이지를 통째로 다시 불러와서 로그인이 풀려요.
+// 그 대신 이 훅으로 같은 제스처를 가로채서, 로그인은 유지한 채 데이터만 다시 불러오게 해요.
+function usePullToRefresh(scrollRef, onRefresh) {
+  const [pullDistance, setPullDistance] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const startY = useRef(null);
+  const pulling = useRef(false);
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e) => {
+      if (el.scrollTop <= 0) {
+        startY.current = e.touches[0].clientY;
+        pulling.current = true;
+      } else {
+        startY.current = null;
+        pulling.current = false;
+      }
+    };
+    const onTouchMove = (e) => {
+      if (!pulling.current || startY.current == null) return;
+      const dy = e.touches[0].clientY - startY.current;
+      if (dy > 0 && el.scrollTop <= 0) {
+        e.preventDefault();
+        setPullDistance(Math.min(dy * 0.45, 72));
+      } else {
+        pulling.current = false;
+        setPullDistance(0);
+      }
+    };
+    const onTouchEnd = () => {
+      if (pulling.current) {
+        setPullDistance((d) => {
+          if (d > 50) {
+            setRefreshing(true);
+            Promise.resolve(onRefreshRef.current?.()).finally(() => setRefreshing(false));
+          }
+          return 0;
+        });
+      }
+      pulling.current = false;
+      startY.current = null;
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [scrollRef]);
+
+  return { pullDistance, refreshing };
+}
+
 function useFileDownloader(showToast) {
   const [downloadingId, setDownloadingId] = useState(null);
   const download = async (fileMeta) => {
@@ -2485,7 +2546,7 @@ function AccountRow({ account, onReset, onRename, onDelete }) {
   );
 }
 
-function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile, onChangeOwnPin, onResetOtherPin, onRenameOther, onDeleteOther, onOpenHomeEdit, personalTheme, onChangePersonalTheme, showToast }) {
+function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile, onChangeOwnPin, onResetOtherPin, onRenameOther, onDeleteOther, onOpenHomeEdit, personalTheme, onChangePersonalTheme, onLogout, showToast }) {
   const ROLE_STYLE = React.useContext(RoleThemeContext);
   const [name, setName] = useState("");
   const [color, setColor] = useState(null);
@@ -2493,6 +2554,7 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
   const [photo, setPhoto] = useState(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [pin, setPin] = useState("");
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const photoInputRef = useRef(null);
 
   useEffect(() => {
@@ -2660,6 +2722,24 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
         </>
       )}
 
+      <div className="h-px bg-slate-100 my-5" />
+      {!confirmLogout ? (
+        <button onClick={() => setConfirmLogout(true)} className="w-full text-[12.5px] font-medium text-slate-400 py-1">
+          로그아웃
+        </button>
+      ) : (
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="text-[12px] text-slate-500 mb-2 text-center">이 기기에서 로그아웃할까요? 다음에 다시 성함과 암구호로 들어오셔야 해요.</p>
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmLogout(false)} className="flex-1 rounded-lg bg-white border border-slate-200 text-slate-400 text-[12px] font-medium py-2">
+              취소
+            </button>
+            <button onClick={onLogout} className="flex-1 rounded-lg bg-slate-700 text-white text-[12px] font-medium py-2">
+              로그아웃할게요
+            </button>
+          </div>
+        </div>
+      )}
     </BottomSheet>
   );
 }
@@ -2667,7 +2747,7 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
 /* ==================================================================== */
 /*  로그인 이후 메인 화면 (일정 / 게시판 탭)                                */
 /* ==================================================================== */
-function MainScreen({ session, accounts, updateAccounts, homeContent, updateHomeContent, onSessionInvalid }) {
+function MainScreen({ session, accounts, updateAccounts, homeContent, updateHomeContent, onSessionInvalid, onLogout, refreshSignal }) {
   const me = accounts.find((a) => a.id === session.accountId);
   const isHost = me?.role === "host";
 
@@ -2864,6 +2944,16 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
       setTimeout(() => setRefreshing(false), 400);
     }
   };
+
+  const firstRefreshSignal = useRef(true);
+  useEffect(() => {
+    if (firstRefreshSignal.current) {
+      firstRefreshSignal.current = false;
+      return;
+    }
+    handleManualRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   const updateSchedule = (updater) => {
     setSchedule((prev) => {
@@ -3256,6 +3346,7 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
         onOpenHomeEdit={() => setHomeEditOpen(true)}
         personalTheme={personalTheme}
         onChangePersonalTheme={handleChangePersonalTheme}
+        onLogout={onLogout}
         showToast={showToast}
       />
 
@@ -3298,6 +3389,19 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
   const [splashStage, setSplashStage] = useState("in"); // in -> hold(보임) -> out(사라지는 중) -> gone
+  const frameRef = useRef(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const handleGlobalRefresh = async () => {
+    const a = await storageGetJSON("accounts", null);
+    if (a) setAccountsState(a);
+    const h = await storageGetJSON("homeContent", null);
+    if (h) setHomeContentState(h);
+    setRefreshTick((t) => t + 1); // 로그인 화면 안(MainScreen)의 일정/게시판도 같이 새로고침하라는 신호예요.
+    await new Promise((r) => setTimeout(r, 350)); // 인디케이터가 너무 순식간에 사라지지 않게 살짝 붙잡아둬요.
+  };
+
+  const { pullDistance, refreshing: refreshingPull } = usePullToRefresh(frameRef, handleGlobalRefresh);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setSplashStage("hold"));
@@ -3322,15 +3426,29 @@ export default function App() {
     (async () => {
       const loadedAccounts = await storageGetJSON("accounts", null);
       const loadedHome = await storageGetJSON("homeContent", null);
+      const loadedSessionId = await (async () => {
+        try {
+          const res = await window.storage.get("current_session", false);
+          return res ? res.value : null;
+        } catch {
+          return null;
+        }
+      })();
       if (cancelled) return;
+      let finalAccounts = loadedAccounts;
       if (loadedAccounts) setAccountsState(loadedAccounts);
       else {
         const hashedSeed = await Promise.all(SEED_ACCOUNTS.map(async (a) => ({ ...a, pin: await hashPin(a.pin) })));
         if (cancelled) return;
+        finalAccounts = hashedSeed;
         setAccountsState(hashedSeed);
         storageSetJSON("accounts", hashedSeed);
       }
       if (loadedHome) setHomeContentState(loadedHome);
+      // 저장해둔 로그인이 있고, 그 계정이 여전히 존재하면 다시 로그인 화면 없이 이어서 들어가요.
+      if (loadedSessionId && finalAccounts?.some((a) => a.id === loadedSessionId)) {
+        setSession({ accountId: loadedSessionId });
+      }
       setReady(true);
     })();
     return () => {
@@ -3368,15 +3486,22 @@ export default function App() {
   const [sealIntro, setSealIntro] = useState(false);
 
   const handleAuthenticated = (payload) => {
+    let id;
     if (payload.isNew) {
-      const id = `u-${Date.now()}`;
+      id = `u-${Date.now()}`;
       updateAccounts((prev) => [...prev, { id, name: payload.name, role: payload.role, pin: payload.pin, color: null, emoji: null, photo: null, rsvp: null }]);
-      setSession({ accountId: id });
     } else {
-      setSession({ accountId: payload.id });
+      id = payload.id;
     }
+    setSession({ accountId: id });
+    if (hasStorage) window.storage.set("current_session", id, false).catch(() => {});
     setSealIntro(true);
     setTimeout(() => setSealIntro(false), 1450);
+  };
+
+  const handleLogout = () => {
+    setSession(null);
+    if (hasStorage) window.storage.delete("current_session", false).catch(() => {});
   };
 
   return (
@@ -3403,9 +3528,18 @@ export default function App() {
       `}</style>
       <RoleThemeContext.Provider value={resolveRoleStyle(homeContent.accentTheme)}>
         <div
-          className="relative w-full h-full sm:w-[390px] sm:h-[844px] sm:rounded-[2.5rem] sm:border-[6px] sm:border-slate-900 bg-white overflow-y-auto flex flex-col"
+          ref={frameRef}
+          className="relative w-full h-full sm:w-[390px] sm:h-[844px] sm:rounded-[2.5rem] sm:border-[6px] sm:border-slate-900 bg-white overflow-y-auto flex flex-col overscroll-y-contain"
           style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif" }}
         >
+          {(pullDistance > 0 || refreshingPull) && (
+            <div
+              className="absolute left-0 right-0 top-0 flex justify-center items-center z-[90] pointer-events-none"
+              style={{ height: refreshingPull ? 44 : pullDistance, transition: refreshingPull ? "height 0.2s" : "none" }}
+            >
+              <RefreshCw size={18} className={`text-violet-400 ${refreshingPull ? "animate-spin" : ""}`} style={!refreshingPull ? { transform: `rotate(${pullDistance * 4}deg)`, opacity: Math.min(pullDistance / 50, 1) } : {}} />
+            </div>
+          )}
           {ready &&
             (session ? (
               <MainScreen
@@ -3414,7 +3548,9 @@ export default function App() {
                 updateAccounts={updateAccounts}
                 homeContent={homeContent}
                 updateHomeContent={updateHomeContent}
-                onSessionInvalid={() => setSession(null)}
+                onSessionInvalid={handleLogout}
+                onLogout={handleLogout}
+                refreshSignal={refreshTick}
               />
             ) : (
               <StartScreen accounts={accounts} onAuthenticated={handleAuthenticated} meetupTitle={homeContent.title} inviteCode={homeContent.inviteCode} />
