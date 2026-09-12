@@ -3381,6 +3381,15 @@ export default function App() {
           65% { transform: translateX(8px) translateY(4px) rotate(8deg) scale(1.08); opacity: 1; }
           100% { transform: translateX(0) translateY(0) rotate(0deg) scale(1); opacity: 1; }
         }
+        @keyframes splashIn {
+          0% { transform: scale(0.72); opacity: 0; }
+          60% { transform: scale(1.06); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes splashTitleIn {
+          0% { opacity: 0; transform: translateY(8px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
       `}</style>
       <RoleThemeContext.Provider value={resolveRoleStyle(homeContent.accentTheme)}>
         <div
@@ -3388,7 +3397,20 @@ export default function App() {
           style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif" }}
         >
           {!ready ? (
-            <div className="flex-1 flex items-center justify-center text-slate-300 text-[13px]">불러오는 중...</div>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ background: "#FCF6F0" }}>
+              <img
+                src="/icons/icon-512.png"
+                alt="배추살롱"
+                className="w-28 h-28 rounded-full shadow-lg object-cover"
+                style={{ animation: "splashIn 0.9s cubic-bezier(0.34,1.56,0.64,1) forwards" }}
+              />
+              <p
+                className="text-[22px] font-semibold text-[#8B5E5E]"
+                style={{ fontFamily: "'Nanum Myeongjo', serif", animation: "splashTitleIn 0.6s ease-out 0.35s both" }}
+              >
+                배추살롱
+              </p>
+            </div>
           ) : session ? (
             <MainScreen
               session={session}
