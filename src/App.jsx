@@ -2132,7 +2132,7 @@ function PostDetailSheet({ post, isHost, accounts, me, open, onClose, onTogglePi
 
   if (!post) return null;
   const roleStyle = ROLE_STYLE[post.authorRole];
-  const isMine = post.authorId ? post.authorId === me.id : post.author === me.name;
+  const isMine = (post.authorId ? post.authorId === me.id : post.author === me.name) || isHost;
 
   const submitComment = () => {
     const text = comment.trim();
@@ -2174,14 +2174,19 @@ function PostDetailSheet({ post, isHost, accounts, me, open, onClose, onTogglePi
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {isHost && !editing && (
+          {isHost && !editing && !confirmDeletePost && (
             <button onClick={() => onTogglePin(post)} aria-label={post.pinned ? "고정 해제" : "고정하기"} className={`p-1.5 rounded-full ${post.pinned ? "bg-violet-50 text-violet-600" : "text-slate-300"}`}>
               {post.pinned ? <PinOff size={16} /> : <Pin size={16} />}
             </button>
           )}
-          {isMine && !editing && (
+          {(isMine || isHost) && !editing && !confirmDeletePost && (
             <button onClick={startEdit} aria-label="글 수정" className="p-1.5 rounded-full text-slate-300">
               <Pencil size={15} />
+            </button>
+          )}
+          {(isMine || isHost) && !editing && !confirmDeletePost && (
+            <button onClick={() => setConfirmDeletePost(true)} aria-label="글 삭제" className="p-1.5 rounded-full text-slate-300">
+              <Trash2 size={15} />
             </button>
           )}
           <button onClick={onClose} aria-label="닫기" className="text-slate-300 p-1">
@@ -2190,7 +2195,25 @@ function PostDetailSheet({ post, isHost, accounts, me, open, onClose, onTogglePi
         </div>
       </div>
 
-      {editing ? (
+      {confirmDeletePost ? (
+        <div className="mt-4 rounded-xl bg-rose-50 border border-rose-100 p-3">
+          <p className="text-[12.5px] text-rose-500 mb-2 text-center">정말 이 글을 지울까요?</p>
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmDeletePost(false)} className="flex-1 rounded-lg bg-white border border-rose-200 text-rose-400 text-[12px] font-medium py-2">
+              취소
+            </button>
+            <button
+              onClick={() => {
+                onDeletePost(post.id);
+                onClose();
+              }}
+              className="flex-1 rounded-lg bg-rose-500 text-white text-[12px] font-medium py-2"
+            >
+              삭제할게요
+            </button>
+          </div>
+        </div>
+      ) : editing ? (
         <>
           <textarea
             value={draftContent}
@@ -2214,29 +2237,6 @@ function PostDetailSheet({ post, isHost, accounts, me, open, onClose, onTogglePi
               취소
             </button>
           </div>
-          {!confirmDeletePost ? (
-            <button onClick={() => setConfirmDeletePost(true)} className="mt-2 text-[11.5px] text-rose-400 flex items-center gap-1">
-              <Trash2 size={11} /> 이 글 삭제하기
-            </button>
-          ) : (
-            <div className="mt-2 rounded-xl bg-rose-50 border border-rose-100 p-2.5">
-              <p className="text-[11.5px] text-rose-500 mb-1.5 text-center">정말 이 글을 지울까요?</p>
-              <div className="flex gap-2">
-                <button onClick={() => setConfirmDeletePost(false)} className="flex-1 rounded-lg bg-white border border-rose-200 text-rose-400 text-[11.5px] font-medium py-1.5">
-                  취소
-                </button>
-                <button
-                  onClick={() => {
-                    onDeletePost(post.id);
-                    onClose();
-                  }}
-                  className="flex-1 rounded-lg bg-rose-500 text-white text-[11.5px] font-medium py-1.5"
-                >
-                  삭제할게요
-                </button>
-              </div>
-            </div>
-          )}
         </>
       ) : (
         <p className="text-[13.5px] text-slate-600 mt-4 leading-relaxed whitespace-pre-wrap">{linkify(post.content)}</p>
