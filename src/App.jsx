@@ -437,6 +437,7 @@ function BottomSheet({ open, onClose, children }) {
     <div className="fixed inset-0 z-40 flex flex-col justify-end sm:absolute">
       <div onClick={onClose} className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-300 ${entered ? "opacity-100" : "opacity-0"}`} />
       <div
+        data-sheet-scroll="true"
         className={`relative bg-white rounded-t-[28px] px-5 pt-3 pb-6 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] max-h-[85%] overflow-y-auto transition-transform duration-300 ease-out ${
           entered ? "translate-y-0" : "translate-y-full"
         }`}
@@ -1437,6 +1438,12 @@ function usePullToRefresh(scrollRef, onRefresh) {
     if (!el) return;
 
     const onTouchStart = (e) => {
+      // 바텀시트(일정 상세, 게시글 상세 등) 안을 만지고 있는 중이면, 그 안의 자체 스크롤에게 양보해요.
+      if (e.target.closest && e.target.closest('[data-sheet-scroll="true"]')) {
+        startY.current = null;
+        pulling.current = false;
+        return;
+      }
       if (el.scrollTop <= 0) {
         startY.current = e.touches[0].clientY;
         pulling.current = true;
@@ -3411,13 +3418,13 @@ export default function App() {
   useEffect(() => {
     if (splashStage !== "hold" || !ready) return;
     // 데이터가 다 준비된 뒤에도 최소한 이만큼은 화면에 붙잡아둬요 (너무 빨리 스쳐가지 않게).
-    const t = setTimeout(() => setSplashStage("out"), 1400);
+    const t = setTimeout(() => setSplashStage("out"), 2600);
     return () => clearTimeout(t);
   }, [splashStage, ready]);
 
   useEffect(() => {
     if (splashStage !== "out") return;
-    const t = setTimeout(() => setSplashStage("gone"), 900); // 아래 transition-duration과 맞춰요.
+    const t = setTimeout(() => setSplashStage("gone"), 1200); // 아래 transition-duration과 맞춰요.
     return () => clearTimeout(t);
   }, [splashStage]);
 
@@ -3558,7 +3565,7 @@ export default function App() {
 
           {splashStage !== "gone" && (
             <div
-              className={`fixed sm:absolute inset-0 z-[80] transition-opacity duration-[900ms] ease-in-out ${splashStage === "hold" ? "opacity-100" : "opacity-0"}`}
+              className={`fixed sm:absolute inset-0 z-[80] transition-opacity duration-[1200ms] ease-in-out ${splashStage === "hold" ? "opacity-100" : "opacity-0"}`}
               style={{ backgroundImage: "url(/splash.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundColor: "#FCF6F0" }}
             />
           )}
