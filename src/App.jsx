@@ -438,7 +438,7 @@ function BottomSheet({ open, onClose, children }) {
       <div onClick={onClose} className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-300 ${entered ? "opacity-100" : "opacity-0"}`} />
       <div
         data-sheet-scroll="true"
-        className={`relative bg-white rounded-t-[28px] px-5 pt-3 pb-6 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] max-h-[85%] overflow-y-auto transition-transform duration-300 ease-out ${
+        className={`relative bg-white rounded-t-[28px] px-5 pt-3 pb-6 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] max-h-[85%] overflow-y-auto overscroll-y-contain transition-transform duration-300 ease-out ${
           entered ? "translate-y-0" : "translate-y-full"
         }`}
       >
@@ -2839,7 +2839,6 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
         setActiveAnnouncement(loadedAnnouncement);
       }
       setLoaded(true);
-      showToast("모시게 되어 영광입니다, 아가씨.");
     })();
     return () => {
       cancelled = true;
@@ -3396,6 +3395,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
   const [splashStage, setSplashStage] = useState("in"); // in -> hold(보임) -> out(사라지는 중) -> gone
+  const [returningUser, setReturningUser] = useState(false); // 저장된 로그인으로 자동으로 들어온 경우
   const frameRef = useRef(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -3418,9 +3418,10 @@ export default function App() {
   useEffect(() => {
     if (splashStage !== "hold" || !ready) return;
     // 데이터가 다 준비된 뒤에도 최소한 이만큼은 화면에 붙잡아둬요 (너무 빨리 스쳐가지 않게).
-    const t = setTimeout(() => setSplashStage("out"), 2600);
+    // 이미 로그인 저장돼서 자동으로 들어온 경우엔 짧게, 처음 들어오는 경우엔 좀 더 길게 보여줘요.
+    const t = setTimeout(() => setSplashStage("out"), returningUser ? 700 : 2100);
     return () => clearTimeout(t);
-  }, [splashStage, ready]);
+  }, [splashStage, ready, returningUser]);
 
   useEffect(() => {
     if (splashStage !== "out") return;
@@ -3455,6 +3456,7 @@ export default function App() {
       // 저장해둔 로그인이 있고, 그 계정이 여전히 존재하면 다시 로그인 화면 없이 이어서 들어가요.
       if (loadedSessionId && finalAccounts?.some((a) => a.id === loadedSessionId)) {
         setSession({ accountId: loadedSessionId });
+        setReturningUser(true);
       }
       setReady(true);
     })();
@@ -3564,10 +3566,12 @@ export default function App() {
             ))}
 
           {splashStage !== "gone" && (
-            <div
-              className={`fixed sm:absolute inset-0 z-[80] transition-opacity duration-[1200ms] ease-in-out ${splashStage === "hold" ? "opacity-100" : "opacity-0"}`}
-              style={{ backgroundImage: "url(/splash.jpg)", backgroundSize: "cover", backgroundPosition: "center", backgroundColor: "#FCF6F0" }}
-            />
+            <div className="fixed sm:absolute inset-0 z-[80]" style={{ backgroundColor: "#FCF6F0" }}>
+              <div
+                className={`absolute inset-0 transition-opacity duration-[1200ms] ease-in-out ${splashStage === "hold" ? "opacity-100" : "opacity-0"}`}
+                style={{ backgroundImage: "url(/splash.jpg)", backgroundSize: "cover", backgroundPosition: "center" }}
+              />
+            </div>
           )}
 
           {sealIntro && (
