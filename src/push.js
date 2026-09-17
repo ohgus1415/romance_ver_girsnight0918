@@ -1,34 +1,42 @@
 // ============================================================================
-// 푸시 알림 구독 준비 (Firebase 연결 후 사용)
+// 푸시 알림 구독
 // ----------------------------------------------------------------------------
-// 아래 VAPID_PUBLIC_KEY 자리에, Firebase 콘솔 > 프로젝트 설정 > 클라우드 메시징
-// 에서 발급받은 "웹 푸시 인증서 키 쌍"의 공개 키를 붙여넣으면 바로 동작해요.
-// (지금은 비어있어서 requestPushPermission()을 호출해도 조용히 실패해요.)
+// 이 함수를 부르면 알림 권한을 물어보고, 허락하면 이 기기의 "구독 토큰"을
+// Firestore(push_tokens)에 저장해요. 실제로 알림을 "보내는" 부분은 별도의
+// Cloud Function(서버 코드)이 필요해요 - 그건 다음 단계예요.
 // ============================================================================
+import { getMessaging, getToken } from "firebase/messaging";
+import { doc, setDoc } from "firebase/firestore";
+import { firebaseApp, db, VAPID_PUBLIC_KEY } from "./firebaseConfig.js";
 
-const VAPID_PUBLIC_KEY = ""; // TODO: Firebase에서 발급받은 공개 키를 여기 붙여넣으세요
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
-}
-
-// 알림 권한을 묻고, 허락하면 이 기기의 "구독 정보"를 돌려줘요.
-// 이 구독 정보를 서버(Firebase 등)에 저장해둬야 나중에 그쪽에서 알림을 보낼 수 있어요.
-export async function requestPushPermission() {
-  if (!("Notification" in window) || !("serviceWorker" in navigator) || !VAPID_PUBLIC_KEY) {
-    console.warn("푸시 알림을 아직 쓸 준비가 안 됐어요 (Firebase 연결이 필요해요).");
+export async function requestPushPermission(accountId) {
+  if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+    console.warn("이 브라우저는 푸시 알림을 지원하지 않아요.");
     return null;
   }
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return null;
 
-  const registration = await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-  });
-  return subscription;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const messaging = getMessaging(firebaseApp);
+    const token = await getToken(messaging, {
+      vapidKey: VAPID_PUBLIC_KEY,
+      serviceWorkerRegistration: registration,
+    });
+    if (!token) return null;
+
+    // 이 토큰을 Firestore에 저장해둬요. 나중에 Cloud Function이 이 목록을 읽어서
+    // "안주인의 전갈"이 올 때마다 여기 있는 모든 토큰으로 알림을 보내줘요.
+    await setDoc(doc(db, "push_tokens", token), {
+      token,
+      accountId: accountId || null,
+      updatedAt: Date.now(),
+    });
+
+    return token;
+  } catch (err) {
+    console.warn("푸시 구독 실패:", err);
+    return null;
+  }
 }
