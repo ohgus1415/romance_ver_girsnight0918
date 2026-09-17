@@ -448,6 +448,21 @@ function BottomSheet({ open, onClose, children }) {
     };
   }, [open]);
 
+  // 시트가 열려있는 동안엔 뒤에 있는 화면(일정 목록 등)이 같이 스크롤되면서
+  // 창이 흔들려 보이는 걸 막기 위해, 뒤 배경 스크롤을 잠가둬요.
+  useEffect(() => {
+    if (!open) return;
+    const frame = document.getElementById("app-scroll-frame");
+    if (!frame) return;
+    const prevOverflow = frame.style.overflow;
+    const prevScrollTop = frame.scrollTop;
+    frame.style.overflow = "hidden";
+    return () => {
+      frame.style.overflow = prevOverflow;
+      frame.scrollTop = prevScrollTop;
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
@@ -3650,6 +3665,7 @@ export default function App() {
       <RoleThemeContext.Provider value={resolveRoleStyle(homeContent.accentTheme)}>
         <div
           ref={frameRef}
+          id="app-scroll-frame"
           className="relative w-full h-full sm:w-[390px] sm:h-[844px] sm:rounded-[2.5rem] sm:border-[6px] sm:border-slate-900 bg-white overflow-y-auto flex flex-col overscroll-y-contain"
           style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif" }}
         >
