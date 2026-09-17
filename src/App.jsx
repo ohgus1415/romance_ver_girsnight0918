@@ -1267,6 +1267,8 @@ function GeneralProposeSheet({ open, onClose, isHost, availableGaps, onSubmit })
   const [startTime, setStartTime] = useState("12:00");
   const [endTime, setEndTime] = useState("");
   const [selectedGapKey, setSelectedGapKey] = useState(null);
+  const [proposeStart, setProposeStart] = useState("");
+  const [proposeEnd, setProposeEnd] = useState("");
   const [confirmNow, setConfirmNow] = useState(false);
 
   useEffect(() => {
@@ -1284,6 +1286,15 @@ function GeneralProposeSheet({ open, onClose, isHost, availableGaps, onSubmit })
   }, [open]);
 
   const selectedGap = availableGaps?.find((g) => g.gapKey === selectedGapKey);
+
+  // 빈 시간을 고르면, 그 범위 안으로 구체적인 제안 시간을 다시 기본값으로 맞춰줘요.
+  useEffect(() => {
+    if (selectedGap) {
+      setProposeStart(selectedGap.startTime);
+      setProposeEnd(selectedGap.endTime);
+    }
+  }, [selectedGap?.gapKey]);
+
   const canSubmit = title.trim().length > 0 && (confirmNow ? !!startTime : !!selectedGap);
 
   return (
@@ -1328,17 +1339,41 @@ function GeneralProposeSheet({ open, onClose, isHost, availableGaps, onSubmit })
         <div className="mb-3.5">
           <p className="text-[12px] font-medium text-slate-400 mb-1.5">어느 빈 시간에 올릴까요?</p>
           {availableGaps && availableGaps.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {availableGaps.map((g) => (
-                <button
-                  key={g.gapKey}
-                  onClick={() => setSelectedGapKey(g.gapKey)}
-                  className={`rounded-full border px-3 py-1.5 text-[12px] ${selectedGapKey === g.gapKey ? "border-violet-500 bg-violet-50 text-violet-600 font-medium" : "border-slate-200 text-slate-500"}`}
-                >
-                  {g.startTime} ~ {g.endTime}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="flex flex-wrap gap-1.5 mb-3.5">
+                {availableGaps.map((g) => (
+                  <button
+                    key={g.gapKey}
+                    onClick={() => setSelectedGapKey(g.gapKey)}
+                    className={`rounded-full border px-3 py-1.5 text-[12px] ${selectedGapKey === g.gapKey ? "border-violet-500 bg-violet-50 text-violet-600 font-medium" : "border-slate-200 text-slate-500"}`}
+                  >
+                    {g.startTime} ~ {g.endTime}
+                  </button>
+                ))}
+              </div>
+              {selectedGap && (
+                <div className="flex gap-2.5 mb-1">
+                  <div className="flex-1">
+                    <p className="text-[12px] font-medium text-slate-400 mb-1.5">이 사이로 구체적인 시간</p>
+                    <input
+                      type="time"
+                      value={proposeStart}
+                      onChange={(e) => setProposeStart(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[13.5px] focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-50"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[12px] font-medium text-slate-400 mb-1.5 opacity-0">종료</p>
+                    <input
+                      type="time"
+                      value={proposeEnd}
+                      onChange={(e) => setProposeEnd(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[13.5px] focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-50"
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <p className="text-[12px] text-slate-400 leading-relaxed">
               오늘은 아직 1시간 이상 비어있는 시간이 없어요.{isHost ? " '의견 수렴 없이 바로 확정하기'를 눌러 직접 시간을 정해보세요." : " 안주인께 새 일정을 부탁해보시겠어요?"}
@@ -1347,7 +1382,7 @@ function GeneralProposeSheet({ open, onClose, isHost, availableGaps, onSubmit })
         </div>
       )}
 
-      <p className="text-[12px] font-medium text-slate-400 mb-1.5">한 줄로 제안해주세요</p>
+      <p className="text-[12px] font-medium text-slate-400 mb-1.5 mt-3">한 줄로 제안해주세요</p>
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
@@ -1372,7 +1407,15 @@ function GeneralProposeSheet({ open, onClose, isHost, availableGaps, onSubmit })
           if (confirmNow) {
             onSubmit({ category, title: title.trim(), startTime, endTime: endTime || undefined, confirmNow: true });
           } else {
-            onSubmit({ category, title: title.trim(), startTime: selectedGap.startTime, endTime: selectedGap.endTime, confirmNow: false });
+            onSubmit({
+              category,
+              title: title.trim(),
+              gapStartTime: selectedGap.startTime,
+              gapEndTime: selectedGap.endTime,
+              proposedStartTime: proposeStart || selectedGap.startTime,
+              proposedEndTime: proposeEnd || selectedGap.endTime,
+              confirmNow: false,
+            });
           }
           onClose();
         }}
@@ -3193,7 +3236,7 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
     showToast("의견을 잘 전해드렸어요 ✨");
   };
 
-  const handleGeneralPropose = ({ category, title, startTime, endTime, confirmNow }) => {
+  const handleGeneralPropose = ({ category, title, startTime, endTime, gapStartTime, gapEndTime, proposedStartTime, proposedEndTime, confirmNow }) => {
     updateSchedule((prev) =>
       prev.map((day) => {
         if (day.date !== selectedDate) return day;
@@ -3201,8 +3244,18 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
           const events = sortEvents([...day.events, { id: `e-${Date.now()}`, title, category, startTime, endTime, status: "confirmed", participants: accounts.length }]);
           return { ...day, events };
         }
-        const key = `${startTime}-${endTime}`;
-        const newProposal = { id: `p-${Date.now()}`, title, category, proposer: me.name, proposerId: me.id, likes: 0, likedByMe: false };
+        const key = `${gapStartTime}-${gapEndTime}`;
+        const newProposal = {
+          id: `p-${Date.now()}`,
+          title,
+          category,
+          proposer: me.name,
+          proposerId: me.id,
+          likes: 0,
+          likedByMe: false,
+          proposedStartTime: proposedStartTime || gapStartTime,
+          proposedEndTime: proposedEndTime || gapEndTime,
+        };
         const list = day.gapProposals?.[key] || [];
         return { ...day, gapProposals: { ...day.gapProposals, [key]: [...list, newProposal] } };
       })
