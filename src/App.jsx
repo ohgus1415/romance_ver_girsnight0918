@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { requestPushPermission } from "./push.js";
 import {
   ArrowLeft,
   Bell,
@@ -2562,6 +2563,7 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
   const [photoUploading, setPhotoUploading] = useState(false);
   const [pin, setPin] = useState("");
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [pushState, setPushState] = useState("idle"); // idle | requesting | on | denied
   const photoInputRef = useRef(null);
 
   useEffect(() => {
@@ -2571,6 +2573,9 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
       setEmoji(me.emoji);
       setPhoto(me.photo || null);
       setPin("");
+      if (typeof Notification !== "undefined") {
+        setPushState(Notification.permission === "granted" ? "on" : Notification.permission === "denied" ? "denied" : "idle");
+      }
     }
   }, [open, me]);
 
@@ -2590,6 +2595,25 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
       showToast("사진을 미처 준비하지 못했어요");
     } finally {
       setPhotoUploading(false);
+    }
+  };
+
+  const handleEnablePush = async () => {
+    setPushState("requesting");
+    try {
+      const token = await requestPushPermission(me.id);
+      if (token) {
+        setPushState("on");
+        showToast("이 기기로 소식이 오면 알려드릴게요 🔔");
+      } else {
+        setPushState(typeof Notification !== "undefined" && Notification.permission === "denied" ? "denied" : "idle");
+        if (typeof Notification !== "undefined" && Notification.permission !== "denied") {
+          showToast("알림을 아직 받을 준비가 안 됐어요");
+        }
+      }
+    } catch {
+      setPushState("idle");
+      showToast("알림 설정 중 문제가 있었어요");
     }
   };
 
@@ -2727,6 +2751,26 @@ function MySettingsSheet({ open, onClose, me, accounts, isHost, onUpdateProfile,
             ))}
           </div>
         </>
+      )}
+
+      <div className="h-px bg-slate-100 my-5" />
+
+      {pushState === "on" ? (
+        <p className="text-[12px] text-emerald-600 flex items-center justify-center gap-1.5 py-1.5">
+          <BellRing size={13} /> 이 기기에서 알림을 받고 있어요
+        </p>
+      ) : pushState === "denied" ? (
+        <p className="text-[11.5px] text-slate-400 text-center py-1.5 leading-relaxed">
+          알림이 차단돼 있어요. 폰 설정 &gt; 브라우저(또는 이 앱) 알림 권한을 허용해주세요.
+        </p>
+      ) : (
+        <button
+          onClick={handleEnablePush}
+          disabled={pushState === "requesting"}
+          className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50/60 text-amber-700 text-[12.5px] font-medium py-2.5"
+        >
+          <BellRing size={14} /> {pushState === "requesting" ? "확인 중..." : "이 기기에서 알림 받기"}
+        </button>
       )}
 
       <div className="h-px bg-slate-100 my-5" />
@@ -2883,6 +2927,12 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
     seenAnnouncementIdRef.current = ann.id;
     if (hasStorage) window.storage.set(`seen_announcement:${me.id}`, ann.id, true).catch(() => {});
     addNotification({ type: "announcement", actorId: me.id, message: title, announcementData: { title, message, background } });
+    // 진짜 폰 푸시 알림도 같이 요청해요 (안 되더라도 앱 안 팝업은 이미 떴으니 조용히 넘어가요).
+    fetch("/api/send-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, message }),
+    }).catch(() => {});
     showToast("전갈을 울렸어요 🔔");
   };
 
