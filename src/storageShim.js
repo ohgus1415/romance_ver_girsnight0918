@@ -1,53 +1,79 @@
 // ============================================================================
-// window.storage 폴리필 (localStorage 기반)
+// window.storage 폴리필 (Firestore 기반, 진짜 여러 기기 동기화)
 // ----------------------------------------------------------------------------
-// 원래 이 앱은 Claude 아티팩트 안에서만 존재하는 window.storage API를 써서
-// "같은 링크를 여는 모든 사람"끼리 데이터가 자동으로 공유됐어요.
-//
-// 지금 이 PWA 버전에는 그 API가 없기 때문에, 여기서는 최대한 비슷하게 동작하도록
-// localStorage로 흉내만 내요. 그 결과:
-//
-//   ✅ 새로고침해도 데이터가 안 사라져요 (이 기기, 이 브라우저 안에서는 유지)
-//   ❌ 친구 폰이랑은 자동으로 동기화되지 않아요 (기기마다 따로 저장돼요)
-//   ❌ "안주인의 전갈" 진짜 푸시 알림도 아직은 안 울려요
-//
-// 진짜로 여러 명이 실시간으로 공유하고, 푸시 알림까지 받으려면
-// Firebase(Firestore + Cloud Messaging) 같은 실제 백엔드를 연결해야 해요.
-// 이 폴리필은 "일단 앱이 안 깨지고 굴러가게" 만드는 임시 다리예요.
+// shared: true  -> 모두가 같이 보는 데이터 (일정, 게시글, 계정 목록 등)
+// shared: false -> 이 기기(브라우저)만의 데이터 (로그인 세션, 이 기기의 읽음 여부 등)
 // ============================================================================
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "./firebaseConfig.js";
 
-const PREFIX = "banquet_app:";
+const SHARED_COLLECTION = "shared_kv";
+const PERSONAL_COLLECTION = "personal_kv";
 
-function readAll() {
-  const out = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith(PREFIX)) out[k.slice(PREFIX.length)] = localStorage.getItem(k);
+function getDeviceId() {
+  let id = localStorage.getItem("__device_id");
+  if (!id) {
+    id = "dev-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem("__device_id", id);
   }
-  return out;
+  return id;
+}
+
+// Firestore 문서 id로 쓰기 안전하게 다듬어요.
+function safeDocId(key) {
+  return key.replace(/\//g, "__");
+}
+
+function refFor(key, shared) {
+  if (shared) return doc(db, SHARED_COLLECTION, safeDocId(key));
+  return doc(db, PERSONAL_COLLECTION, `${getDeviceId()}__${safeDocId(key)}`);
 }
 
 const shim = {
-  async get(key /*, shared */) {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (raw === null) return null;
-    return { key, value: raw, shared: false };
+  async get(key, shared) {
+    try {
+      const snap = await getDoc(refFor(key, shared));
+      if (!snap.exists()) return null;
+      const data = snap.data();
+      return { key, value: data.value, shared: !!shared };
+    } catch (err) {
+      console.warn("storage.get 실패:", key, err);
+      return null;
+    }
   },
-  async set(key, value /*, shared */) {
-    localStorage.setItem(PREFIX + key, value);
-    return { key, value, shared: false };
+  async set(key, value, shared) {
+    try {
+      await setDoc(refFor(key, shared), { key, value, shared: !!shared, updatedAt: Date.now() });
+      return { key, value, shared: !!shared };
+    } catch (err) {
+      console.warn("storage.set 실패:", key, err);
+      return null;
+    }
   },
-  async delete(key /*, shared */) {
-    localStorage.removeItem(PREFIX + key);
-    return { key, deleted: true, shared: false };
+  async delete(key, shared) {
+    try {
+      await deleteDoc(refFor(key, shared));
+      return { key, deleted: true, shared: !!shared };
+    } catch (err) {
+      console.warn("storage.delete 실패:", key, err);
+      return null;
+    }
   },
-  async list(prefix = "" /*, shared */) {
-    const all = readAll();
-    const keys = Object.keys(all).filter((k) => k.startsWith(prefix));
-    return { keys, prefix, shared: false };
+  async list(prefix = "", shared) {
+    try {
+      const col = collection(db, shared ? SHARED_COLLECTION : PERSONAL_COLLECTION);
+      const q = shared && prefix ? query(col, where("key", ">=", prefix), where("key", "<", prefix + "\uf8ff")) : col;
+      const snaps = await getDocs(q);
+      const keys = [];
+      snaps.forEach((s) => keys.push(s.data().key));
+      return { keys, prefix, shared: !!shared };
+    } catch (err) {
+      console.warn("storage.list 실패:", err);
+      return { keys: [], prefix, shared: !!shared };
+    }
   },
 };
 
-if (typeof window !== "undefined" && !window.storage) {
+if (typeof window !== "undefined") {
   window.storage = shim;
 }
