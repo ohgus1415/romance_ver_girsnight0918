@@ -426,6 +426,7 @@ const PIN_LIMIT = 2;
 /* ==================================================================== */
 function BottomSheet({ open, onClose, children }) {
   const [entered, setEntered] = useState(false);
+  const [viewport, setViewport] = useState(null); // 모바일 키보드가 열려도 흔들리지 않게 실제 보이는 화면 크기를 따라가요.
   useEffect(() => {
     if (open) {
       const t = requestAnimationFrame(() => setEntered(true));
@@ -433,9 +434,26 @@ function BottomSheet({ open, onClose, children }) {
     }
     setEntered(false);
   }, [open]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => setViewport({ height: vv.height, top: vv.offsetTop });
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex flex-col justify-end sm:absolute">
+    <div
+      className="fixed inset-0 z-40 flex flex-col justify-end sm:absolute"
+      style={viewport ? { height: viewport.height, top: viewport.top } : undefined}
+    >
       <div onClick={onClose} className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-300 ${entered ? "opacity-100" : "opacity-0"}`} />
       <div
         data-sheet-scroll="true"
@@ -812,6 +830,12 @@ function ProposalCard({ proposal, isHost, me, onToggleLike, onAdd, onEdit, onDel
       <p className="text-[10.5px] text-slate-400 mt-0.5">
         {proposal.proposer} 제안{proposal.edited ? " · 수정됨" : ""}
       </p>
+      {proposal.proposedStartTime && (
+        <p className="text-[10px] text-violet-400 mt-0.5">
+          {proposal.proposedStartTime}
+          {proposal.proposedEndTime ? ` ~ ${proposal.proposedEndTime}` : ""}
+        </p>
+      )}
 
       {editing ? (
         <div className="flex gap-1 mt-2">
@@ -1122,13 +1146,20 @@ function EventFormSheet({ open, onClose, mode, initial, onSubmit, onDelete }) {
 function ProposeSheet({ open, onClose, event, onSubmit }) {
   const [category, setCategory] = useState("etc");
   const [title, setTitle] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
   useEffect(() => {
     if (!open) {
       setCategory("etc");
       setTitle("");
+      setStartTime("");
+      setEndTime("");
+    } else if (event) {
+      setStartTime(event.startTime || "");
+      setEndTime(event.endTime || "");
     }
-  }, [open]);
+  }, [open, event]);
 
   const canSubmit = title.trim().length > 0;
 
@@ -1139,8 +1170,8 @@ function ProposeSheet({ open, onClose, event, onSubmit }) {
           <h2 className="text-[16px] font-semibold text-slate-800">이 시간에 뭘 해볼까요?</h2>
           {event && (
             <p className="text-[12px] text-slate-400 mt-0.5">
-              {event.startTime}
-              {event.endTime ? ` ~ ${event.endTime}` : ""}
+              이 사이({event.startTime}
+              {event.endTime ? ` ~ ${event.endTime}` : ""}) 어딘가로 시간을 정해주세요
             </p>
           )}
         </div>
@@ -1167,6 +1198,27 @@ function ProposeSheet({ open, onClose, event, onSubmit }) {
         })}
       </div>
 
+      <div className="flex gap-2.5 mb-4">
+        <div className="flex-1">
+          <p className="text-[12px] font-medium text-slate-400 mb-1.5">시작 시간</p>
+          <input
+            type="time"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[13.5px] focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-50"
+          />
+        </div>
+        <div className="flex-1">
+          <p className="text-[12px] font-medium text-slate-400 mb-1.5">종료 시간 (선택)</p>
+          <input
+            type="time"
+            value={endTime}
+            onChange={(e) => setEndTime(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[13.5px] focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-50"
+          />
+        </div>
+      </div>
+
       <p className="text-[12px] font-medium text-slate-400 mb-1.5">한 줄로 제안해주세요</p>
       <input
         value={title}
@@ -1179,7 +1231,7 @@ function ProposeSheet({ open, onClose, event, onSubmit }) {
       <button
         disabled={!canSubmit}
         onClick={() => {
-          onSubmit({ category, title: title.trim() });
+          onSubmit({ category, title: title.trim(), proposedStartTime: startTime, proposedEndTime: endTime });
           onClose();
         }}
         className={`w-full rounded-full text-[14px] font-medium py-3.5 ${canSubmit ? "bg-violet-500 text-white shadow-lg shadow-violet-200" : "bg-slate-100 text-slate-300"}`}
@@ -3048,8 +3100,8 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
           id: `e-${Date.now()}`,
           title: proposal.title,
           category: proposal.category || guessCategory(proposal.title),
-          startTime: gapItem.startTime,
-          endTime: gapItem.endTime,
+          startTime: proposal.proposedStartTime || gapItem.startTime,
+          endTime: proposal.proposedEndTime || gapItem.endTime,
           status: "confirmed",
           participants: accounts.length,
           description: `${proposal.proposer}님이 제안했고, 다 같이 좋아해서 확정했어요.`,
@@ -3103,9 +3155,19 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
     showToast(currentDay.closed ? "이 날짜 일정을 다시 열었어요" : "이 날짜 일정을 마감했어요");
   };
 
-  const handleSubmitProposal = (gapItem, { category, title }) => {
+  const handleSubmitProposal = (gapItem, { category, title, proposedStartTime, proposedEndTime }) => {
     if (!gapItem) return;
-    const newProposal = { id: `p-${Date.now()}`, title, category, proposer: me.name, proposerId: me.id, likes: 0, likedByMe: false };
+    const newProposal = {
+      id: `p-${Date.now()}`,
+      title,
+      category,
+      proposer: me.name,
+      proposerId: me.id,
+      likes: 0,
+      likedByMe: false,
+      proposedStartTime: proposedStartTime || gapItem.startTime,
+      proposedEndTime: proposedEndTime || undefined,
+    };
     updateSchedule((prev) =>
       prev.map((day) => {
         if (day.date !== selectedDate) return day;
