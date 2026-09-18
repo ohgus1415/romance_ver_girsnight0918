@@ -3113,9 +3113,12 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
   };
 
   const handleDeleteNotification = (id) => {
-    const next = notifications.filter((n) => n.id !== id);
-    setNotifications(next);
-    storageSetJSON("notifications", next);
+    (async () => {
+      const latest = (await storageGetJSON("notifications", null)) ?? notifications;
+      const next = latest.filter((n) => n.id !== id);
+      await storageSetJSON("notifications", next);
+      setNotifications(next);
+    })();
   };
 
   const handleSelectNotification = (n) => {
@@ -3162,18 +3165,20 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
   }, [refreshSignal]);
 
   const updateSchedule = (updater) => {
-    setSchedule((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      storageSetJSON("schedule_v2", next);
-      return next;
-    });
+    (async () => {
+      const latest = (await storageGetJSON("schedule_v2", null)) ?? schedule;
+      const next = typeof updater === "function" ? updater(latest) : updater;
+      await storageSetJSON("schedule_v2", next);
+      setSchedule(next);
+    })();
   };
   const updatePosts = (updater) => {
-    setPosts((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      storageSetJSON("posts", next);
-      return next;
-    });
+    (async () => {
+      const latest = (await storageGetJSON("posts", null)) ?? posts;
+      const next = typeof updater === "function" ? updater(latest) : updater;
+      await storageSetJSON("posts", next);
+      setPosts(next);
+    })();
   };
 
   const currentDay = schedule.find((d) => d.date === selectedDate) || schedule[0];
@@ -3698,19 +3703,23 @@ export default function App() {
   }, [ready]);
 
   const updateAccounts = (updater) => {
-    setAccountsState((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      storageSetJSON("accounts", next);
-      return next;
-    });
+    (async () => {
+      // 로컬에 갖고있던 값은 최대 8초 정도 오래됐을 수 있어서, 쓰기 직전에 항상 최신 걸 다시 가져와요.
+      // (안 그러면 거의 동시에 여러 명이 가입/수정할 때 서로 덮어써버리는 사고가 나요.)
+      const latest = (await storageGetJSON("accounts", null)) ?? accounts;
+      const next = typeof updater === "function" ? updater(latest) : updater;
+      await storageSetJSON("accounts", next);
+      setAccountsState(next);
+    })();
   };
 
   const updateHomeContent = (updater) => {
-    setHomeContentState((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      storageSetJSON("homeContent", next);
-      return next;
-    });
+    (async () => {
+      const latest = (await storageGetJSON("homeContent", null)) ?? homeContent;
+      const next = typeof updater === "function" ? updater(latest) : updater;
+      await storageSetJSON("homeContent", next);
+      setHomeContentState(next);
+    })();
   };
 
   const [sealIntro, setSealIntro] = useState(false);
