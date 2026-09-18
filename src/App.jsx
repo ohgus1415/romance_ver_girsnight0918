@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { requestPushPermission } from "./push.js";
 import {
   ArrowLeft,
@@ -479,21 +480,23 @@ function BottomSheet({ open, onClose, children }) {
 
   if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-40 flex flex-col justify-end sm:absolute"
-      style={viewport ? { height: viewport.height, top: viewport.top } : undefined}
-    >
-      <div onClick={onClose} className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-300 ${entered ? "opacity-100" : "opacity-0"}`} />
+    <FramePortal>
       <div
-        data-sheet-scroll="true"
-        className={`relative bg-white rounded-t-[28px] px-5 pt-3 pb-6 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] max-h-[85%] overflow-y-auto overscroll-y-contain transition-transform duration-300 ease-out ${
-          entered ? "translate-y-0" : "translate-y-full"
-        }`}
+        className="fixed inset-0 z-40 flex flex-col justify-end sm:absolute"
+        style={viewport ? { height: viewport.height, top: viewport.top } : undefined}
       >
-        <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-200" />
-        {children}
+        <div onClick={onClose} className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-300 ${entered ? "opacity-100" : "opacity-0"}`} />
+        <div
+          data-sheet-scroll="true"
+          className={`relative bg-white rounded-t-[28px] px-5 pt-3 pb-6 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] max-h-[85%] overflow-y-auto overscroll-y-contain transition-transform duration-300 ease-out ${
+            entered ? "translate-y-0" : "translate-y-full"
+          }`}
+        >
+          <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-200" />
+          {children}
+        </div>
       </div>
-    </div>
+    </FramePortal>
   );
 }
 
@@ -770,13 +773,27 @@ function BottomTabBar({ active, onChange, role }) {
   );
 }
 
+// fixed/absolute로 고정해야 하는 요소(플러스 버튼, 바텀시트 등)를 화면 프레임에 직접 붙여요.
+// 중간에 있는 다른 요소(예: backdrop-blur가 있는 헤더)가 CSS상 '기준점'을 새로 만들어버려서
+// fixed 위치가 스크롤을 따라 움직이는 문제를 원천적으로 막기 위해서예요.
+function FramePortal({ children }) {
+  const [node, setNode] = useState(null);
+  useEffect(() => {
+    setNode(document.getElementById("app-scroll-frame"));
+  }, []);
+  if (!node) return null;
+  return createPortal(children, node);
+}
+
 function RoundFab({ role, icon: Icon, onClick, label }) {
   const ROLE_STYLE = React.useContext(RoleThemeContext);
   const s = ROLE_STYLE[role];
   return (
-    <button onClick={onClick} aria-label={label} className={`fixed sm:absolute right-4 bottom-24 z-30 h-[52px] w-[52px] rounded-full ${s.solid} text-white flex items-center justify-center shadow-lg ${s.solidShadow}`}>
-      <Icon size={22} />
-    </button>
+    <FramePortal>
+      <button onClick={onClick} aria-label={label} className={`fixed sm:absolute right-4 bottom-24 z-30 h-[52px] w-[52px] rounded-full ${s.solid} text-white flex items-center justify-center shadow-lg ${s.solidShadow}`}>
+        <Icon size={22} />
+      </button>
+    </FramePortal>
   );
 }
 
