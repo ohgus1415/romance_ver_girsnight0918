@@ -358,12 +358,26 @@ function toMinutes(t) {
 function computeDayTimeline(day) {
   const confirmed = [...day.events].filter((e) => e.status === "confirmed").sort((a, b) => a.startTime.localeCompare(b.startTime));
   if (day.closed) return confirmed;
-  const pool = day.gapProposals || {};
+
+  // 저장된 모든 제안을 하나의 풀로 모아요. 각 제안이 "원래 어느 버킷(키)에 저장돼 있었는지"도
+  // 같이 기억해둬요 (수정/삭제/찜/확정할 때 그 자리를 정확히 찾아가기 위해서예요).
+  const allProposals = [];
+  Object.entries(day.gapProposals || {}).forEach(([bucketKey, list]) => {
+    const bucketStart = bucketKey.split("-")[0];
+    (list || []).forEach((p) => {
+      allProposals.push({ ...p, __bucketKey: bucketKey, __refStart: p.proposedStartTime || bucketStart });
+    });
+  });
+
   const items = [];
   const pushGap = (gapStart, gapEnd) => {
     if (toMinutes(gapEnd) - toMinutes(gapStart) >= 60) {
       const key = `${gapStart}-${gapEnd}`;
-      items.push({ id: `gap:${key}`, gapKey: key, startTime: gapStart, endTime: gapEnd, status: "empty", proposals: pool[key] || [] });
+      // 이 틈 안에 실제로 들어오는(제안된 시간이 이 구간에 속하는) 제안들만 여기 보여줘요.
+      // -> 나중에 이 큰 틈 사이에 새 일정이 확정돼서 틈이 여러 개로 쪼개져도,
+      //    각 제안이 자기 시간에 맞는 새 틈으로 자동으로 옮겨가 보여요.
+      const proposalsHere = allProposals.filter((p) => toMinutes(p.__refStart) >= toMinutes(gapStart) && toMinutes(p.__refStart) < toMinutes(gapEnd));
+      items.push({ id: `gap:${key}`, gapKey: key, startTime: gapStart, endTime: gapEnd, status: "empty", proposals: proposalsHere });
     }
   };
   if (confirmed.length === 0) {
@@ -989,10 +1003,19 @@ function DayTimeline({ events, isHost, me, onOpenEvent, onPlanEmpty, onProposeEm
                   me={me}
                   onPlan={onPlanEmpty}
                   onPropose={onProposeEmpty}
-                  onToggleLike={(proposalId) => onToggleLike(event.gapKey, proposalId)}
+                  onToggleLike={(proposalId) => {
+                    const p = event.proposals.find((x) => x.id === proposalId);
+                    onToggleLike(p?.__bucketKey || event.gapKey, proposalId);
+                  }}
                   onAdd={(proposal) => onAddProposal(event, proposal)}
-                  onEdit={(proposalId, newTitle) => onEditProposal(event.gapKey, proposalId, newTitle)}
-                  onDelete={(proposalId) => onDeleteProposal(event.gapKey, proposalId)}
+                  onEdit={(proposalId, newTitle) => {
+                    const p = event.proposals.find((x) => x.id === proposalId);
+                    onEditProposal(p?.__bucketKey || event.gapKey, proposalId, newTitle);
+                  }}
+                  onDelete={(proposalId) => {
+                    const p = event.proposals.find((x) => x.id === proposalId);
+                    onDeleteProposal(p?.__bucketKey || event.gapKey, proposalId);
+                  }}
                 />
               )}
             </div>
@@ -3164,9 +3187,10 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
           participants: accounts.length,
           description: `${proposal.proposer}님이 제안했고, 다 같이 좋아해서 확정했어요.`,
         };
-        const restProposals = { ...day.gapProposals };
-        delete restProposals[gapItem.gapKey];
-        return { ...day, events: sortEvents([...day.events, newEvent]), gapProposals: restProposals };
+        const bucketKey = proposal.__bucketKey || gapItem.gapKey;
+        const restList = (day.gapProposals?.[bucketKey] || []).filter((p) => p.id !== proposal.id);
+        const nextGapProposals = { ...day.gapProposals, [bucketKey]: restList };
+        return { ...day, events: sortEvents([...day.events, newEvent]), gapProposals: nextGapProposals };
       })
     );
     showToast(`'${proposal.title}' 일정을 확정 지었어요 🎉`);
