@@ -31,15 +31,14 @@ function refFor(key, shared) {
 
 const shim = {
   async get(key, shared) {
-    try {
-      const snap = await getDoc(refFor(key, shared));
-      if (!snap.exists()) return null;
-      const data = snap.data();
-      return { key, value: data.value, shared: !!shared };
-    } catch (err) {
-      console.warn("storage.get 실패:", key, err);
-      return null;
-    }
+    // 주의: 여기서 에러를 삼키지 않고 그대로 던져요. '진짜로 데이터가 없음'과
+    // '네트워크 문제로 못 읽음'을 호출한 쪽에서 구분할 수 있어야, 순간적인
+    // 네트워크 끊김 때문에 "데이터가 없다"고 착각해서 잘못 재시딩(덮어쓰기)하는
+    // 사고를 막을 수 있어요.
+    const snap = await getDoc(refFor(key, shared));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    return { key, value: data.value, shared: !!shared };
   },
   async set(key, value, shared) {
     try {

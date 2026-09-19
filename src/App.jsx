@@ -55,6 +55,30 @@ async function storageGetJSON(key, fallback) {
     return fallback;
   }
 }
+// 앱이 처음 켜질 때 '공유 데이터가 진짜로 하나도 없어서 기본값을 깔아야 하는 상황'과
+// '네트워크가 잠깐 불안정해서 못 읽어온 상황'을 반드시 구분해서 반환해요.
+// (구분 안 하면, 순간적인 네트워크 끊김에도 "없다"고 착각해서 실제 데이터를
+//  기본값으로 덮어써버리는 사고가 나요 — 실제로 겪었던 버그예요.)
+async function loadSharedOrSeed(key, seedFactory) {
+  if (!hasStorage) return { status: "error", data: null };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await window.storage.get(key, true);
+      if (res) return { status: "ok", data: JSON.parse(res.value) };
+      // 진짜로 없는 게 확인됐어요 - 이번이 정말 처음이에요.
+      const seed = typeof seedFactory === "function" ? await seedFactory() : seedFactory;
+      await storageSetJSON(key, seed);
+      return { status: "seeded", data: seed };
+    } catch (err) {
+      if (attempt === 2) {
+        console.warn(`"${key}" 불러오기 실패 (네트워크 문제로 추정, 재시딩하지 않음):`, err);
+        return { status: "error", data: null };
+      }
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  return { status: "error", data: null };
+}
 async function storageSetJSON(key, value) {
   if (!hasStorage) return;
   try {
@@ -2992,8 +3016,8 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const loadedSchedule = await storageGetJSON("schedule_v2", null);
-      const loadedPosts = await storageGetJSON("posts", null);
+      const scheduleResult = await loadSharedOrSeed("schedule_v2", () => INITIAL_SCHEDULE);
+      const postsResult = await loadSharedOrSeed("posts", () => INITIAL_POSTS);
       const loadedNotifs = await storageGetJSON("notifications", null);
       const loadedReadAt = await (async () => {
         try {
@@ -3021,10 +3045,8 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
         }
       })();
       if (cancelled) return;
-      if (loadedSchedule) setSchedule(loadedSchedule);
-      else storageSetJSON("schedule_v2", INITIAL_SCHEDULE);
-      if (loadedPosts) setPosts(loadedPosts);
-      else storageSetJSON("posts", INITIAL_POSTS);
+      if (scheduleResult.status !== "error") setSchedule(scheduleResult.data);
+      if (postsResult.status !== "error") setPosts(postsResult.data);
       if (loadedNotifs) setNotifications(pruneExpiredNotifications(loadedNotifs));
       setLastReadAt(loadedReadAt || 0);
       if (loadedPersonalTheme) setPersonalTheme(loadedPersonalTheme);
@@ -3166,18 +3188,30 @@ function MainScreen({ session, accounts, updateAccounts, homeContent, updateHome
 
   const updateSchedule = (updater) => {
     (async () => {
-      const latest = (await storageGetJSON("schedule_v2", null)) ?? schedule;
-      const next = typeof updater === "function" ? updater(latest) : updater;
-      await storageSetJSON("schedule_v2", next);
-      setSchedule(next);
+      try {
+        const res = await window.storage.get("schedule_v2", true);
+        const latest = res ? JSON.parse(res.value) : schedule;
+        const next = typeof updater === "function" ? updater(latest) : updater;
+        await storageSetJSON("schedule_v2", next);
+        setSchedule(next);
+      } catch (err) {
+        console.warn("일정 저장 실패(네트워크 문제로 추정, 이번 변경은 반영 못 했어요):", err);
+        showToast("지금은 저장이 안 됐어요, 잠시 후 다시 시도해주세요");
+      }
     })();
   };
   const updatePosts = (updater) => {
     (async () => {
-      const latest = (await storageGetJSON("posts", null)) ?? posts;
-      const next = typeof updater === "function" ? updater(latest) : updater;
-      await storageSetJSON("posts", next);
-      setPosts(next);
+      try {
+        const res = await window.storage.get("posts", true);
+        const latest = res ? JSON.parse(res.value) : posts;
+        const next = typeof updater === "function" ? updater(latest) : updater;
+        await storageSetJSON("posts", next);
+        setPosts(next);
+      } catch (err) {
+        console.warn("게시글 저장 실패 (네트워크 문제로 추정, 이번 변경은 반영 못 했어요):", err);
+        showToast("지금은 저장이 안 됐어요, 잠시 후 다시 시도해주세요");
+      }
     })();
   };
 
@@ -3658,7 +3692,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const loadedAccounts = await storageGetJSON("accounts", null);
+      const accountsResult = await loadSharedOrSeed("accounts", async () => Promise.all(SEED_ACCOUNTS.map(async (a) => ({ ...a, pin: await hashPin(a.pin) }))));
       const loadedHome = await storageGetJSON("homeContent", null);
       const loadedSessionId = await (async () => {
         try {
@@ -3669,15 +3703,10 @@ export default function App() {
         }
       })();
       if (cancelled) return;
-      let finalAccounts = loadedAccounts;
-      if (loadedAccounts) setAccountsState(loadedAccounts);
-      else {
-        const hashedSeed = await Promise.all(SEED_ACCOUNTS.map(async (a) => ({ ...a, pin: await hashPin(a.pin) })));
-        if (cancelled) return;
-        finalAccounts = hashedSeed;
-        setAccountsState(hashedSeed);
-        storageSetJSON("accounts", hashedSeed);
-      }
+      // 실패(error)했을 때는 절대 아무것도 덮어쓰지 않아요 - 화면엔 일단 기존 값(초기 데모 계정)을 잠깐 보여주고,
+      // 잠시 후 자동 폴링이 다시 시도해서 진짜 데이터로 채워줘요.
+      const finalAccounts = accountsResult.status !== "error" ? accountsResult.data : accounts;
+      if (accountsResult.status !== "error") setAccountsState(accountsResult.data);
       if (loadedHome) setHomeContentState(loadedHome);
       // 저장해둔 로그인이 있고, 그 계정이 여전히 존재하면 다시 로그인 화면 없이 이어서 들어가요.
       if (loadedSessionId && finalAccounts?.some((a) => a.id === loadedSessionId)) {
@@ -3704,21 +3733,31 @@ export default function App() {
 
   const updateAccounts = (updater) => {
     (async () => {
-      // 로컬에 갖고있던 값은 최대 8초 정도 오래됐을 수 있어서, 쓰기 직전에 항상 최신 걸 다시 가져와요.
-      // (안 그러면 거의 동시에 여러 명이 가입/수정할 때 서로 덮어써버리는 사고가 나요.)
-      const latest = (await storageGetJSON("accounts", null)) ?? accounts;
-      const next = typeof updater === "function" ? updater(latest) : updater;
-      await storageSetJSON("accounts", next);
-      setAccountsState(next);
+      try {
+        // 로컬에 갖고있던 값은 최대 8초 정도 오래됐을 수 있어서, 쓰기 직전에 항상 최신 걸 다시 가져와요.
+        // (안 그러면 거의 동시에 여러 명이 가입/수정할 때 서로 덮어써버리는 사고가 나요.)
+        const res = await window.storage.get("accounts", true);
+        const latest = res ? JSON.parse(res.value) : accounts;
+        const next = typeof updater === "function" ? updater(latest) : updater;
+        await storageSetJSON("accounts", next);
+        setAccountsState(next);
+      } catch (err) {
+        console.warn("계정 저장 실패 (네트워크 문제로 추정, 이번 변경은 반영 못 했어요):", err);
+      }
     })();
   };
 
   const updateHomeContent = (updater) => {
     (async () => {
-      const latest = (await storageGetJSON("homeContent", null)) ?? homeContent;
-      const next = typeof updater === "function" ? updater(latest) : updater;
-      await storageSetJSON("homeContent", next);
-      setHomeContentState(next);
+      try {
+        const res = await window.storage.get("homeContent", true);
+        const latest = res ? JSON.parse(res.value) : homeContent;
+        const next = typeof updater === "function" ? updater(latest) : updater;
+        await storageSetJSON("homeContent", next);
+        setHomeContentState(next);
+      } catch (err) {
+        console.warn("초대장 저장 실패 (네트워크 문제로 추정, 이번 변경은 반영 못 했어요):", err);
+      }
     })();
   };
 
